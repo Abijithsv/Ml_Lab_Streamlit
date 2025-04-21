@@ -1,78 +1,56 @@
 exp7 svm
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from sklearn import datasets
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, roc_curve, auc
-from sklearn.preprocessing import label_binarize
+import pandas as pd  
+import numpy as np  
+from sklearn.model_selection import train_test_split  
+from sklearn.preprocessing import StandardScaler  
+from sklearn.svm import SVC  
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score  
+from sklearn.preprocessing import label_binarize  
+import matplotlib.pyplot as plt  
+from sklearn.metrics import roc_curve, auc  
 
-iris = datasets.load_iris()
-X = iris.data
-y = iris.target
+df = pd.read_csv("Student_performance_data _.csv")  
+X = df.drop(['StudentID', 'GradeClass'], axis=1)  
+y = df['GradeClass']  
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)  
 
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
+scaler = StandardScaler()  
+X_train = scaler.fit_transform(X_train)  
+X_test = scaler.transform(X_test)  
 
-svm_model = SVC(kernel='linear', probability=True)
-svm_model.fit(X_train, y_train)
+model = SVC(kernel='linear', probability=True)  
+model.fit(X_train, y_train)  
 
-y_pred = svm_model.predict(X_test)
+y_pred = model.predict(X_test)  
 
-cm = confusion_matrix(y_test, y_pred)
-print("Confusion Matrix for Linear Kernel:\n", cm)
+cm = confusion_matrix(y_test, y_pred)  
+print("Confusion Matrix:\n", cm)  
 
-TP = cm[0, 0]
-TN = cm[1, 1]
-FP = cm[0, 1]
-FN = cm[1, 0]
+print("Classification Report:\n", classification_report(y_test, y_pred))  
 
-classification_accuracy = (TP + TN) / float(TP + TN + FP + FN)
-print('Classification accuracy: {:.4f}'.format(classification_accuracy))
+print("Accuracy: {:.2f}".format(accuracy_score(y_test, y_pred)))  
 
-classification_error = (FP + FN) / float(TP + TN + FP + FN)
-print('Classification error: {:.4f}'.format(classification_error))
+y_test_bin = label_binarize(y_test, classes=sorted(y.unique()))  
+n_classes = y_test_bin.shape[1]  
 
-class_report = classification_report(y_test, y_pred)
-print("Classification Report for Linear Kernel:\n", class_report)
+fpr = {}  
+tpr = {}  
+roc_auc = {}  
+for i in range(n_classes):  
+    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], model.predict_proba(X_test)[:, i])  
+    roc_auc[i] = auc(fpr[i], tpr[i])  
 
-accuracy = accuracy_score(y_test, y_pred)
-print(f"Accuracy for Linear Kernel: {accuracy:.2f}")
-
-y_test_bin = label_binarize(y_test, classes=[0, 1, 2])
-n_classes = y_test_bin.shape[1]
-fpr = {}
-tpr = {}
-roc_auc = {}
-for i in range(n_classes):
-    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], svm_model.predict_proba(X_test)[:, i])
-    roc_auc[i] = auc(fpr[i], tpr[i])
-
-plt.figure()
-for i in range(n_classes):
-    plt.plot(fpr[i], tpr[i], label=f'ROC curve - Class {i} (area = {roc_auc[i]:.2f})')
-plt.plot([0, 1], [0, 1], 'k--', label='Random Guessing')
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('ROC Curve for Linear Kernel')
-plt.legend(loc='best')
-plt.show()
-
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-            xticklabels=['Class 0', 'Class 1', 'Class 2'],
-            yticklabels=['Class 0', 'Class 1', 'Class 2'])
-plt.ylabel('Actual')
-plt.xlabel('Predicted')
-plt.title('Confusion Matrix Heatmap for Linear Kernel')
-plt.show()
+plt.figure()  
+for i in range(n_classes):  
+    plt.plot(fpr[i], tpr[i], label=f'Class {i} (AUC = {roc_auc[i]:.2f})')  
+plt.plot([0, 1], [0, 1], 'k--')  
+plt.xlabel('False Positive Rate')  
+plt.ylabel('True Positive Rate')  
+plt.title('ROC Curve')  
+plt.legend()  
+plt.show()  
 
 
 exp8 nsvm
