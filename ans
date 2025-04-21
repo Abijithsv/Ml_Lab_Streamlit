@@ -1,1 +1,436 @@
-sastra
+exp7 svm
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn import datasets
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, roc_curve, auc
+from sklearn.preprocessing import label_binarize
+
+iris = datasets.load_iris()
+X = iris.data
+y = iris.target
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train)
+X_test = scaler.transform(X_test)
+
+svm_model = SVC(kernel='linear', probability=True)
+svm_model.fit(X_train, y_train)
+
+y_pred = svm_model.predict(X_test)
+
+cm = confusion_matrix(y_test, y_pred)
+print("Confusion Matrix for Linear Kernel:\n", cm)
+
+TP = cm[0, 0]
+TN = cm[1, 1]
+FP = cm[0, 1]
+FN = cm[1, 0]
+
+classification_accuracy = (TP + TN) / float(TP + TN + FP + FN)
+print('Classification accuracy: {:.4f}'.format(classification_accuracy))
+
+classification_error = (FP + FN) / float(TP + TN + FP + FN)
+print('Classification error: {:.4f}'.format(classification_error))
+
+class_report = classification_report(y_test, y_pred)
+print("Classification Report for Linear Kernel:\n", class_report)
+
+accuracy = accuracy_score(y_test, y_pred)
+print(f"Accuracy for Linear Kernel: {accuracy:.2f}")
+
+y_test_bin = label_binarize(y_test, classes=[0, 1, 2])
+n_classes = y_test_bin.shape[1]
+fpr = {}
+tpr = {}
+roc_auc = {}
+for i in range(n_classes):
+    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], svm_model.predict_proba(X_test)[:, i])
+    roc_auc[i] = auc(fpr[i], tpr[i])
+
+plt.figure()
+for i in range(n_classes):
+    plt.plot(fpr[i], tpr[i], label=f'ROC curve - Class {i} (area = {roc_auc[i]:.2f})')
+plt.plot([0, 1], [0, 1], 'k--', label='Random Guessing')
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curve for Linear Kernel')
+plt.legend(loc='best')
+plt.show()
+
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
+            xticklabels=['Class 0', 'Class 1', 'Class 2'],
+            yticklabels=['Class 0', 'Class 1', 'Class 2'])
+plt.ylabel('Actual')
+plt.xlabel('Predicted')
+plt.title('Confusion Matrix Heatmap for Linear Kernel')
+plt.show()
+
+
+exp8 nsvm
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.svm import SVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+
+file_path = "pulsar_data_train.csv"
+df = pd.read_csv(file_path)
+
+df.fillna(df.mean(), inplace=True)
+
+X = df.iloc[:, :-1]
+y = df.iloc[:, -1]
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+pca = PCA(n_components=2)
+X_pca = pca.fit_transform(X_scaled)
+
+X_train, X_test, y_train, y_test = train_test_split(X_pca, y, test_size=0.2, random_state=42)
+
+kernels = ['rbf', 'poly', 'sigmoid']
+
+for kernel in kernels:
+    clf = SVC(kernel=kernel, C=10, gamma='scale', coef0=0)
+    clf.fit(X_train, y_train)
+
+    y_pred = clf.predict(X_test)
+    print(f"Classification Report for {kernel} kernel:")
+    print(classification_report(y_test, y_pred))
+
+    cm = confusion_matrix(y_test, y_pred)
+
+    cmd = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=clf.classes_)
+    cmd.plot(cmap=plt.cm.Blues)
+    plt.title(f'Confusion Matrix for {kernel} kernel')
+    plt.show()
+
+    plt.figure(figsize=(10, 6))
+    plt.title(f"SVM Decision Boundary with {kernel} Kernel")
+    plt.xlabel('Principal Component 1')
+    plt.ylabel('Principal Component 2')
+
+    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
+    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
+    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
+    Z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
+    Z = Z.reshape(xx.shape)
+    plt.contourf(xx, yy, Z, alpha=0.3, cmap=plt.cm.Paired)
+
+    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap=plt.cm.Paired, edgecolors='k')
+    plt.show()
+
+
+exp9 ffn
+
+import tensorflow as tf
+import pandas as pd
+import numpy as np
+import math
+import random
+from sklearn import preprocessing
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, roc_auc_score
+import matplotlib.pyplot as plt
+
+file_name = "survey lung cancer.csv"
+data = pd.read_csv(file_name)
+
+print(data.head())
+
+data['GENDER'] = data['GENDER'].map({'M': 1, 'F': 0})
+data['LUNG_CANCER'] = data['LUNG_CANCER'].map({'YES': 1, 'NO': 0})
+
+features = data.drop(columns=['LUNG_CANCER'])
+response = 'LUNG_CANCER'
+x = features.values
+y = data[response].values
+
+x = preprocessing.normalize(x)
+
+n_test = int(math.ceil(len(data) * 0.3))
+random.seed(42)
+test_ixs = random.sample(list(range(len(data))), n_test)
+train_ixs = [ix for ix in range(len(data)) if ix not in test_ixs]
+x_train, y_train = x[train_ixs], y[train_ixs]
+x_test, y_test = x[test_ixs], y[test_ixs]
+
+model = tf.keras.Sequential([
+    tf.keras.layers.Dense(32, activation='relu', input_shape=(x_train.shape[1],)),
+    tf.keras.layers.Dropout(0.5),
+    tf.keras.layers.Dense(16, activation='relu'),
+    tf.keras.layers.Dense(1, activation='sigmoid')
+])
+
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+model.summary()
+
+epochs = 20
+batch_size = 16
+history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(x_test, y_test))
+
+train_acc = model.evaluate(x_train, y_train, batch_size=32)[1]
+test_acc = model.evaluate(x_test, y_test, batch_size=32)[1]
+print('Training accuracy: %s' % train_acc)
+print('Testing accuracy: %s' % test_acc)
+
+y_pred = (model.predict(x_test) > 0.5).astype("int32")
+print(classification_report(y_test, y_pred))
+
+conf_matrix = confusion_matrix(y_test, y_pred)
+print('Confusion Matrix:\n', conf_matrix)
+
+plt.figure(figsize=(6, 4))
+plt.imshow(conf_matrix, interpolation='nearest', cmap=plt.cm.Blues)
+plt.title('Confusion Matrix')
+plt.colorbar()
+tick_marks = np.arange(2)
+plt.xticks(tick_marks, ['No Lung Cancer', 'Lung Cancer'])
+plt.yticks(tick_marks, ['No Lung Cancer', 'Lung Cancer'])
+
+thresh = conf_matrix.max() / 2
+for i, j in np.ndindex(conf_matrix.shape):
+    plt.text(j, i, format(conf_matrix[i, j]), horizontalalignment="center",
+             color="white" if conf_matrix[i, j] > thresh else "black")
+
+plt.ylabel('True label')
+plt.xlabel('Predicted label')
+plt.tight_layout()
+plt.show()
+
+y_score = model.predict(x_test)
+fpr, tpr, _ = roc_curve(y_test, y_score)
+roc_auc = roc_auc_score(y_test, y_score)
+
+plt.figure(figsize=(8, 6))
+plt.plot(fpr, tpr, color='blue', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
+plt.plot([0, 1], [0, 1], color='red', lw=2, linestyle='--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('Receiver Operating Characteristic')
+plt.legend(loc="lower right")
+plt.show()
+
+
+exp10 rnn
+
+import numpy as np  
+import tensorflow as tf  
+print(tf.__version__)    
+from tensorflow import keras  
+from tensorflow.keras import layers  
+import matplotlib.pyplot as plt  
+
+np.random.seed(42)  
+X = np.linspace(-1.5, 1.5, 200)  
+y = np.sin(3 * np.pi * X) + np.random.normal(0, 0.1, size=X.shape)  
+X = X.reshape(-1, 1)  
+
+X_train, X_test = X[:160], X[160:]  
+y_train, y_test = y[:160], y[160:]  
+
+def build_overfitting_model():  
+    model = keras.Sequential([  
+        layers.Dense(256, activation='relu', input_shape=(1,)),  
+        layers.Dense(256, activation='relu'),  
+        layers.Dense(256, activation='relu'),  
+        layers.Dense(1)  
+    ])  
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])  
+    return model  
+
+model_overfit = build_overfitting_model()  
+history_overfit = model_overfit.fit(X_train, y_train, epochs=200, validation_data=(X_test, y_test), verbose=0)  
+
+def build_regularized_model():  
+    model = keras.Sequential([  
+        layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01), input_shape=(1,)),  
+        layers.Dropout(0.3),  
+        layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)),  
+        layers.Dropout(0.3),  
+        layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)),  
+        layers.Dropout(0.3),  
+        layers.Dense(1)  
+    ])  
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])  
+    return model  
+
+model_regularized = build_regularized_model()  
+history_regularized = model_regularized.fit(X_train, y_train, epochs=200, validation_data=(X_test, y_test), verbose=0)  
+
+overfit_test_loss = model_overfit.evaluate(X_test, y_test, verbose=0)  
+regularized_test_loss = model_regularized.evaluate(X_test, y_test, verbose=0)  
+
+print("Test Loss (Overfitting Model):", overfit_test_loss[0])  
+print("Test Loss (Regularized Model):", regularized_test_loss[0])  
+
+plt.figure(figsize=(12, 5))  
+plt.subplot(1, 2, 1)  
+plt.plot(history_overfit.history['loss'], label='Train Loss')  
+plt.plot(history_overfit.history['val_loss'], label='Validation Loss')  
+plt.title('Overfitting Model Training Loss')  
+plt.xlabel('Epochs')  
+plt.ylabel('Loss')  
+plt.legend()  
+
+plt.subplot(1, 2, 2)  
+plt.plot(history_regularized.history['loss'], label='Train Loss')  
+plt.plot(history_regularized.history['val_loss'], label='Validation Loss')  
+plt.title('Regularized Model Training Loss')  
+plt.xlabel('Epochs')  
+plt.ylabel('Loss')  
+plt.legend()  
+
+plt.tight_layout()  
+plt.show()  
+
+y_overfit_pred = model_overfit.predict(X_test)  
+y_regularized_pred = model_regularized.predict(X_test)  
+
+plt.figure(figsize=(14, 6))  
+plt.subplot(1, 2, 1)  
+plt.scatter(X_test, y_test, color='blue', label='True Values')  
+plt.scatter(X_test, y_overfit_pred, color='red', label='Overfitting Model Predictions')  
+plt.title('Overfitting Model Predictions')  
+plt.xlabel('X')  
+plt.ylabel('y')  
+plt.legend()  
+
+plt.subplot(1, 2, 2)  
+plt.scatter(X_test, y_test, color='blue', label='True Values')  
+plt.scatter(X_test, y_regularized_pred, color='green', label='Regularized Model Predictions')  
+plt.title('Regularized Model Predictions')  
+plt.xlabel('X')  
+plt.ylabel('y')  
+plt.legend()  
+
+plt.tight_layout()  
+plt.show()  
+
+
+exp11 cnn
+
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
+from sklearn.preprocessing import label_binarize
+import tensorflow as tf
+from tensorflow.keras import layers, models
+import seaborn as sns
+
+(train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.mnist.load_data()
+
+train_images = train_images.reshape((60000, 28, 28, 1)).astype('float32') / 255
+test_images = test_images.reshape((10000, 28, 28, 1)).astype('float32') / 255
+
+model = models.Sequential([
+    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.Flatten(),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(10, activation='softmax')
+])
+
+model.compile(optimizer='adam',
+              loss='sparse_categorical_crossentropy',
+              metrics=['accuracy'])
+
+history = model.fit(train_images, train_labels, 
+                    epochs=10, 
+                    validation_data=(test_images, test_labels))
+
+test_loss, test_acc = model.evaluate(test_images, test_labels)
+print(f'\nTest accuracy: {test_acc:.4f}')
+
+y_pred = model.predict(test_images)
+y_pred_classes = np.argmax(y_pred, axis=1)
+
+print("\nClassification Report:")
+print(classification_report(test_labels, y_pred_classes))
+
+cm = confusion_matrix(test_labels, y_pred_classes)
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Confusion Matrix')
+plt.show()
+
+y_test_bin = label_binarize(test_labels, classes=np.arange(10))
+fpr, tpr, roc_auc = dict(), dict(), dict()
+
+plt.figure(figsize=(10, 8))
+for i in range(10):
+    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], y_pred[:, i])
+    roc_auc[i] = auc(fpr[i], tpr[i])
+    plt.plot(fpr[i], tpr[i], label=f'Class {i} (AUC = {roc_auc[i]:.2f})')
+
+plt.plot([0, 1], [0, 1], 'k--')
+plt.xlim([0.0, 1.0])
+plt.ylim([0.0, 1.05])
+plt.xlabel('False Positive Rate')
+plt.ylabel('True Positive Rate')
+plt.title('ROC Curves for Each Class')
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.show()
+
+print("\nClass-wise AUC Scores:")
+for i in range(10):
+    print(f"Class {i}: {roc_auc[i]:.4f}")
+    
+print(f"\nMacro-average ROC AUC: {np.mean(list(roc_auc.values())):.4f}")
+
+
+exp12 hm
+
+import numpy as np
+from hmmlearn import hmm
+
+states = ["Sunny", "Rainy", "Cloudy"]
+observations = ["shorts", "coat", "umbrella"]
+
+obs_map = {o: i for i, o in enumerate(observations)}
+sequence = ["shorts", "coat", "umbrella"]
+obs_seq = np.array([obs_map[o] for o in sequence]).reshape(-1, 1)
+
+model = hmm.CategoricalHMM(n_components=3, init_params='', n_iter=1)
+
+model.startprob_ = np.array([0.33, 0.33, 0.34])
+
+model.transmat_ = np.array([
+    [0.8, 0.15, 0.05],
+    [0.38, 0.6, 0.02],
+    [0.75, 0.05, 0.2]
+])
+
+model.emissionprob_ = np.array([
+    [0.6, 0.3, 0.1],
+    [0.05, 0.3, 0.65],
+    [0, 0.5, 0.5]
+])
+
+predicted_states = model.predict(obs_seq)
+
+print("Observation sequence:", sequence)
+print("Predicted weather states:", [states[i] for i in predicted_states])
