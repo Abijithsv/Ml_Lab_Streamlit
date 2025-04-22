@@ -118,33 +118,25 @@ exp9 ffn
 import tensorflow as tf
 import pandas as pd
 import numpy as np
-import math
-import random
 from sklearn import preprocessing
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, roc_auc_score
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 
 file_name = "survey lung cancer.csv"
 data = pd.read_csv(file_name)
-
 print(data.head())
 
 data['GENDER'] = data['GENDER'].map({'M': 1, 'F': 0})
 data['LUNG_CANCER'] = data['LUNG_CANCER'].map({'YES': 1, 'NO': 0})
 
-features = data.drop(columns=['LUNG_CANCER'])
-response = 'LUNG_CANCER'
-x = features.values
-y = data[response].values
+x = data.drop(columns=['LUNG_CANCER']).values
+y = data['LUNG_CANCER'].values
 
-x = preprocessing.normalize(x)
+scaler = preprocessing.StandardScaler()
+x = scaler.fit_transform(x)
 
-n_test = int(math.ceil(len(data) * 0.3))
-random.seed(42)
-test_ixs = random.sample(list(range(len(data))), n_test)
-train_ixs = [ix for ix in range(len(data)) if ix not in test_ixs]
-x_train, y_train = x[train_ixs], y[train_ixs]
-x_test, y_test = x[test_ixs], y[test_ixs]
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, random_state=42)
 
 model = tf.keras.Sequential([
     tf.keras.layers.Dense(32, activation='relu', input_shape=(x_train.shape[1],)),
@@ -159,14 +151,12 @@ model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
 
 model.summary()
 
-epochs = 20
-batch_size = 16
-history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size, validation_data=(x_test, y_test))
+history = model.fit(x_train, y_train, epochs=20, batch_size=16, validation_data=(x_test, y_test))
 
 train_acc = model.evaluate(x_train, y_train, batch_size=32)[1]
 test_acc = model.evaluate(x_test, y_test, batch_size=32)[1]
-print('Training accuracy: %s' % train_acc)
-print('Testing accuracy: %s' % test_acc)
+print('Training accuracy:', train_acc)
+print('Testing accuracy:', test_acc)
 
 y_pred = (model.predict(x_test) > 0.5).astype("int32")
 print(classification_report(y_test, y_pred))
