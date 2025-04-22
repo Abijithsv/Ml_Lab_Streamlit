@@ -118,7 +118,7 @@ exp9 ffn
 import tensorflow as tf
 import pandas as pd
 import numpy as np
-from sklearn import preprocessing
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, roc_auc_score
 from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
@@ -133,10 +133,10 @@ data['LUNG_CANCER'] = data['LUNG_CANCER'].map({'YES': 1, 'NO': 0})
 x = data.drop(columns=['LUNG_CANCER']).values
 y = data['LUNG_CANCER'].values
 
-scaler = preprocessing.StandardScaler()
-x = scaler.fit_transform(x)
-
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, random_state=42)
+
+scaler = StandardScaler()
+x = scaler.fit_transform(x_train)
 
 model = tf.keras.Sequential([
     tf.keras.layers.Dense(32, activation='relu', input_shape=(x_train.shape[1],)),
