@@ -288,78 +288,106 @@ plt.show()
 
 exp11 cnn
 
+import os
+import zipfile
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report, confusion_matrix, roc_curve, auc
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
 from sklearn.preprocessing import label_binarize
-import tensorflow as tf
-from tensorflow.keras import layers, models
 import seaborn as sns
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras import layers, models
 
-(train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.mnist.load_data()
+# === Step 1: Define dataset path ===
+with zipfile.ZipFile('C:/Users/abiji/OneDrive/Documents/Animals.zip', 'r') as zip_ref:
+    zip_ref.extractall("C:/Users/abiji/OneDrive/Documents/Animals")
+dataset_path = "C:/Users/abiji/OneDrive/Documents/Animals"
 
-train_images = train_images.reshape((60000, 28, 28, 1)).astype('float32') / 255
-test_images = test_images.reshape((10000, 28, 28, 1)).astype('float32') / 255
 
+# === Step 2: Load dataset ===
+batch_size = 32
+img_height, img_width = 150, 150
+
+datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+
+train_data = datagen.flow_from_directory(
+    dataset_path,
+    target_size=(img_height, img_width),
+    batch_size=batch_size,
+    class_mode='categorical',
+    subset='training',
+    shuffle=True)
+
+val_data = datagen.flow_from_directory(
+    dataset_path,
+    target_size=(img_height, img_width),
+    batch_size=batch_size,
+    class_mode='categorical',
+    subset='validation',
+    shuffle=False)
+
+class_names = list(train_data.class_indices.keys())
+num_classes = len(class_names)
+
+print(f"Detected classes: {class_names}")
+
+# === Step 3: Build CNN model ===
 model = models.Sequential([
-    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(28, 28, 1)),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.Conv2D(32, (3,3), activation='relu', input_shape=(img_height, img_width, 3)),
+    layers.MaxPooling2D(2,2),
+    layers.Conv2D(64, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
+    layers.Conv2D(128, (3,3), activation='relu'),
+    layers.MaxPooling2D(2,2),
     layers.Flatten(),
-    layers.Dense(64, activation='relu'),
-    layers.Dense(10, activation='softmax')
+    layers.Dense(128, activation='relu'),
+    layers.Dense(num_classes, activation='softmax')
 ])
 
-model.compile(optimizer='adam',
-              loss='sparse_categorical_crossentropy',
-              metrics=['accuracy'])
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+model.fit(train_data, validation_data=val_data, epochs=10)
 
-history = model.fit(train_images, train_labels, 
-                    epochs=10, 
-                    validation_data=(test_images, test_labels))
+# === Step 4: Evaluation ===
+val_data.reset()
+pred_probs = model.predict(val_data)
+y_pred = np.argmax(pred_probs, axis=1)
+y_true = val_data.classes
+y_true_bin = label_binarize(y_true, classes=range(num_classes))
 
-test_loss, test_acc = model.evaluate(test_images, test_labels)
-print(f'\nTest accuracy: {test_acc:.4f}')
-
-y_pred = model.predict(test_images)
-y_pred_classes = np.argmax(y_pred, axis=1)
-
-print("\nClassification Report:")
-print(classification_report(test_labels, y_pred_classes))
-
-cm = confusion_matrix(test_labels, y_pred_classes)
-plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+# Confusion Matrix
+cm = confusion_matrix(y_true, y_pred)
+plt.figure(figsize=(8, 6))
+sns.heatmap(cm, annot=True, fmt='d', xticklabels=class_names, yticklabels=class_names, cmap='Blues')
+plt.title('Confusion Matrix')
 plt.xlabel('Predicted')
 plt.ylabel('True')
-plt.title('Confusion Matrix')
+plt.tight_layout()
 plt.show()
 
-y_test_bin = label_binarize(test_labels, classes=np.arange(10))
-fpr, tpr, roc_auc = dict(), dict(), dict()
+# Classification Report
+print("Classification Report:")
+print(classification_report(y_true, y_pred, target_names=class_names))
 
-plt.figure(figsize=(10, 8))
-for i in range(10):
-    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], y_pred[:, i])
-    roc_auc[i] = auc(fpr[i], tpr[i])
-    plt.plot(fpr[i], tpr[i], label=f'Class {i} (AUC = {roc_auc[i]:.2f})')
+# ROC Curve and AUC
+fpr = {}
+tpr = {}
+roc_auc = {}
+for i in range(num_classes):
+    fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], pred_probs[:, i])
+    roc_auc[i] = roc_auc_score(y_true_bin[:, i], pred_probs[:, i])
 
-plt.plot([0, 1], [0, 1], 'k--')
-plt.xlim([0.0, 1.0])
-plt.ylim([0.0, 1.05])
+# Plot ROC curves
+plt.figure(figsize=(8, 6))
+for i in range(num_classes):
+    plt.plot(fpr[i], tpr[i], label=f'{class_names[i]} (AUC = {roc_auc[i]:.2f})')
+plt.plot([0, 1], [0, 1], 'k--', label='Random Guess')
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
-plt.title('ROC Curves for Each Class')
-plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.title('Multiclass ROC Curve')
+plt.legend()
+plt.tight_layout()
 plt.show()
-
-print("\nClass-wise AUC Scores:")
-for i in range(10):
-    print(f"Class {i}: {roc_auc[i]:.4f}")
-    
-print(f"\nMacro-average ROC AUC: {np.mean(list(roc_auc.values())):.4f}")
 
 
 exp12 hm
