@@ -364,33 +364,33 @@ print(f"\nMacro-average ROC AUC: {np.mean(list(roc_auc.values())):.4f}")
 
 exp12 hm
 
-import numpy as np
-from hmmlearn import hmm
+import numpy as np  
+from hmmlearn import hmm  
+states = ["Sunny", "Rainy", "Cloudy"]  
+observations = ["shorts", "coat", "umbrella"]  
+obs_map = {o: i for i, o in enumerate(observations)}  
+sequence = ["coat", "coat", "umbrella"]  
+obs_seq = np.array([obs_map[o] for o in sequence]).reshape(-1, 1)  
+model = hmm.CategoricalHMM(n_components=3, init_params='', n_iter=1)  
+model.startprob_ = np.array([0.33, 0.33, 0.34])  
 
-states = ["Sunny", "Rainy", "Cloudy"]
-observations = ["shorts", "coat", "umbrella"]
+model.transmat_ = np.array([  
+    [0.8, 0.15, 0.05],   # Sunny  
+    [0.38, 0.6, 0.02],   # Rainy  
+    [0.75, 0.05, 0.2]    # Cloudy  
+])  
 
-obs_map = {o: i for i, o in enumerate(observations)}
-sequence = ["shorts", "coat", "umbrella"]
-obs_seq = np.array([obs_map[o] for o in sequence]).reshape(-1, 1)
+model.emissionprob_ = np.array([  
+    [0.1, 0.8, 0.1],   # Sunny  
+    [0.1, 0.2, 0.7],   # Rainy  
+    [0.4, 0.5, 0.1]    # Cloud  
+])  
 
-model = hmm.CategoricalHMM(n_components=3, init_params='', n_iter=1)
+predicted_states = model.predict(obs_seq)  
+log_prob = model.score(obs_seq)  
+probability = np.exp(log_prob)  # Convert from log probability to regular probability  
 
-model.startprob_ = np.array([0.33, 0.33, 0.34])
-
-model.transmat_ = np.array([
-    [0.8, 0.15, 0.05],
-    [0.38, 0.6, 0.02],
-    [0.75, 0.05, 0.2]
-])
-
-model.emissionprob_ = np.array([
-    [0.6, 0.3, 0.1],
-    [0.05, 0.3, 0.65],
-    [0, 0.5, 0.5]
-])
-
-predicted_states = model.predict(obs_seq)
-
-print("Observation sequence:", sequence)
-print("Predicted weather states:", [states[i] for i in predicted_states])
+print("Observation sequence:", sequence)  
+print("Predicted weather states:", [states[i] for i in predicted_states])  
+print("Log probability of the observation sequence:", log_prob)  
+print("Probability of the observation sequence:", probability)
