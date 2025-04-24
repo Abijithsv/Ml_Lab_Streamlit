@@ -1,424 +1,428 @@
-exp7 svm
+import time
+import bluetooth
+import requests
+from influxdb import InfluxDBClient
 
-import pandas as pd  
-import numpy as np  
-from sklearn.model_selection import train_test_split  
-from sklearn.preprocessing import StandardScaler  
-from sklearn.svm import SVC  
-from sklearn.metrics import confusion_matrix, classification_report, accuracy_score  
-from sklearn.preprocessing import label_binarize  
-import matplotlib.pyplot as plt  
-from sklearn.metrics import roc_curve, auc  
+# ------------------------- CONFIGURATIONS -------------------------
+
+INFLUX_HOST = "localhost"
+INFLUX_PORT = 8086
+INFLUX_DB = "AirQualityMonitoring"
+MEASUREMENT = "Sensor-Data"
+
+# THINGSPEAK_API_KEY = "F0SITC92UK0WBJ6D"
+# THINGSPEAK_URL = "https://api.thingspeak.com/update"
+
+# Initialize InfluxDB Client
+client = InfluxDBClient(host=INFLUX_HOST, port=INFLUX_PORT, database=INFLUX_DB)
+
+# ------------------------- FUNCTIONS -------------------------
+
+def find_esp32_address(target_name="ESP32-BT-Server"):
+    devices = bluetooth.discover_devices(duration=8, lookup_names=True)
+    for addr, name in devices:
+        if name == target_name:
+            return addr
+    return None
+
+def store_data_in_influxdb(mq5_value, mq135_value):
+    timestamp = int(time.time() * 1e9)  # nanoseconds
+    data = [
+        {
+            "measurement": MEASUREMENT,
+            "time": timestamp,
+            "fields": {
+                "MQ5": mq5_value,
+                "MQ135": mq135_value
+            }
+        }
+    ]
+    client.write_points(data)
+    print(f"Stored in InfluxDB: MQ5={mq5_value}, MQ135={mq135_value}")
+
+/*
+def send_to_thingspeak(mq5_value, mq135_value):
+    payload = {
+        "api_key": THINGSPEAK_API_KEY,
+        "field1": mq5_value,
+        "field2": mq135_value
+    }
+    requests.post(THINGSPEAK_URL, data=payload)
+
+*/
+
+# ------------------------- MAIN LOGIC -------------------------
+
+def main():
+    address = find_esp32_address()
+    if address is None:
+        print("ESP32 not found.")
+        return
+
+    print(f"Found ESP32: {address}")
+
+    try:
+        sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+        sock.connect((address, 1))
+        print("Connected to ESP32")
+
+        while True:
+            sock.send("read\n")  # Request sensor data
+            data = sock.recv(1024).decode('utf-8').strip()
+            print(f"Received: {data}")
+
+            try:
+                # Expected format: "MQ5:123,MQ135:456"
+                parts = data.split(',')
+                mq5 = int(parts[0].split(':')[1])
+                mq135 = int(parts[1].split(':')[1])
+
+                store_data_in_influxdb(mq5, mq135)
+                #send_to_thingspeak(mq5, mq135)
+
+            except Exception as e:
+                print(f"Error parsing data: {e}")
 
-df = pd.read_csv("Student_performance_data _.csv")  
-X = df.drop(['StudentID', 'GradeClass'], axis=1)  
-y = df['GradeClass']  
+            time.sleep(15)
+
+    except bluetooth.btcommon.BluetoothError as e:
+        print(f"Bluetooth error: {e}")
+    finally:
+        sock.close()
+
+if __name__ == "__main__":
+    main()
+
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)  
 
-scaler = StandardScaler()  
-X_train = scaler.fit_transform(X_train)  
-X_test = scaler.transform(X_test)  
+esp code:
+
+#include "BluetoothSerial.h"
+#include <Wire.h>
 
-model = SVC(kernel='linear', probability=True)  
-model.fit(X_train, y_train)  
+BluetoothSerial SerialBT;
 
-y_pred = model.predict(X_test)  
+// Define sensor pins (analog)
+const int MQ5_PIN = 34;    // GPIO34 for MQ5 (Analog)
+const int MQ135_PIN = 35;   // GPIO35 for MQ135 (Analog)
 
-cm = confusion_matrix(y_test, y_pred)  
-print("Confusion Matrix:\n", cm)  
+void setup() {
+  Serial.begin(115200);
+  SerialBT.begin("ESP32-BT-Server"); // Bluetooth device name
+  Serial.println("Bluetooth started. Waiting for connections...");
 
-print("Classification Report:\n", classification_report(y_test, y_pred))  
+  // Initialize analog pins
+  pinMode(MQ5_PIN, INPUT);
+  pinMode(MQ135_PIN, INPUT);
+}
+
+void loop() {
+  // Check for incoming Bluetooth commands
+  if (SerialBT.available()) {
+    String command = SerialBT.readStringUntil('\n');
+    command.trim();
 
-print("Accuracy: {:.2f}".format(accuracy_score(y_test, y_pred)))  
+    if (command == "read") {
+      // Read sensor values
+      int mq5Value = analogRead(MQ5_PIN);
+      int mq135Value = analogRead(MQ135_PIN);
 
-y_test_bin = label_binarize(y_test, classes=sorted(y.unique()))  
-n_classes = y_test_bin.shape[1]  
+      // Send data in format: "MQ5:123,MQ135:456"
+      String data = "MQ5:" + String(mq5Value) + ",MQ135:" + String(mq135Value);
+      SerialBT.println(data);
+      Serial.println("Sent: " + data);  // Debug print
+    }
+  }
 
-fpr = {}  
-tpr = {}  
-roc_auc = {}  
-for i in range(n_classes):  
-    fpr[i], tpr[i], _ = roc_curve(y_test_bin[:, i], model.predict_proba(X_test)[:, i])  
-    roc_auc[i] = auc(fpr[i], tpr[i])  
+  delay(100); // Small delay to reduce CPU usage
+}
+------------
+import time
+import paho.mqtt.client as mqtt
+
+# ThingSpeak MQTT settings
+MQTT_BROKER = "mqtt.thingspeak.com"
+MQTT_PORT = 1883
+MQTT_CLIENT_ID = "uniqueClientID"  # Can be any unique string
+
+THINGSPEAK_CHANNEL_ID = "YOUR_CHANNEL_ID"
+THINGSPEAK_WRITE_API_KEY = "YOUR_WRITE_API_KEY"
+
+def send_to_thingspeak_mqtt():
+
+    """Sends latest MQ-5 and MQ-135 sensor data from InfluxDB to ThingSpeak via MQTT."""
+
+    query = f'SELECT "MQ5", "MQ135" FROM "{MEASUREMENT}" ORDER BY time DESC LIMIT 1'
+    result = client.query(query)
+    points = list(result.get_points())
+
+    if points:
+        for point in points:
+            mq5_value = point['MQ5']
+            mq135_value = point['MQ135']
+            payload = f"field1={mq5_value}&field2={mq135_value}"
+            print(f"Publishing to ThingSpeak MQTT: {payload}")
 
-plt.figure()  
-for i in range(n_classes):  
-    plt.plot(fpr[i], tpr[i], label=f'Class {i} (AUC = {roc_auc[i]:.2f})')  
-plt.plot([0, 1], [0, 1], 'k--')  
-plt.xlabel('False Positive Rate')  
-plt.ylabel('True Positive Rate')  
-plt.title('ROC Curve')  
-plt.legend()  
-plt.show()  
+            topic = f"channels/{THINGSPEAK_CHANNEL_ID}/publish/{THINGSPEAK_WRITE_API_KEY}"
 
+            mqtt_client = mqtt.Client(MQTT_CLIENT_ID)
+            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            mqtt_client.publish(topic, payload)
+            mqtt_client.disconnect()
 
-exp8 nsvm
+            print("Data sent via MQTT to ThingSpeak!")
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
+            time.sleep(16)  # Wait more than 15 seconds to respect ThingSpeak limits
+    else:
+        print("No data found in InfluxDB!")
 
-file_path = "pulsar_data_train.csv"
-df = pd.read_csv(file_path)
+--------
 
-df.fillna(df.mean(), inplace=True)
+#include "BluetoothSerial.h"
 
-X = df.iloc[:, :-1]
-y = df.iloc[:, -1]
+BluetoothSerial SerialBT;
 
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)
+const int led1Pin = 5;    // GPIO5 for LED 1
+const int led2Pin = 18;   // GPIO18 for LED 2
 
-pca = PCA(n_components=2)
-X_pca = pca.fit_transform(X_scaled)
+void setup() {
+  Serial.begin(115200);
+  SerialBT.begin("ESP32-BT-Server"); // Bluetooth device name
+  Serial.println("Bluetooth Started. Waiting for messages...");
 
-X_train, X_test, y_train, y_test = train_test_split(X_pca, y, test_size=0.2, random_state=42)
+  pinMode(led1Pin, OUTPUT);
+  pinMode(led2Pin, OUTPUT);
 
-kernels = ['rbf', 'poly', 'sigmoid']
+  digitalWrite(led1Pin, LOW);  // Initialize LEDs OFF
+  digitalWrite(led2Pin, LOW);
+}
 
-for kernel in kernels:
-    clf = SVC(kernel=kernel, C=10, gamma='scale', coef0=0)
-    clf.fit(X_train, y_train)
+void loop() {
+  if (SerialBT.available()) {
+    String message = SerialBT.readStringUntil('\n');
+    message.trim();
 
-    y_pred = clf.predict(X_test)
-    print(f"Classification Report for {kernel} kernel:")
-    print(classification_report(y_test, y_pred))
+    Serial.println("Received: " + message);
 
-    cm = confusion_matrix(y_test, y_pred)
+    if (message == "High") {
+      digitalWrite(led1Pin, HIGH);  // Turn LEDs ON
+      digitalWrite(led2Pin, HIGH);
+      SerialBT.println("LEDs: ON");
+    } else if (message == "Low") {
+      digitalWrite(led1Pin, LOW);  // Turn LEDs OFF
+      digitalWrite(led2Pin, LOW);
+      SerialBT.println("LEDs: OFF");
+    } else {
+      SerialBT.println("Invalid command. Use High or Low.");
+    }
+  }
+}
 
-    cmd = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=clf.classes_)
-    cmd.plot(cmap=plt.cm.Blues)
-    plt.title(f'Confusion Matrix for {kernel} kernel')
-    plt.show()
 
-    plt.figure(figsize=(10, 6))
-    plt.title(f"SVM Decision Boundary with {kernel} Kernel")
-    plt.xlabel('Principal Component 1')
-    plt.ylabel('Principal Component 2')
-
-    x_min, x_max = X_pca[:, 0].min() - 1, X_pca[:, 0].max() + 1
-    y_min, y_max = X_pca[:, 1].min() - 1, X_pca[:, 1].max() + 1
-    xx, yy = np.meshgrid(np.linspace(x_min, x_max, 100), np.linspace(y_min, y_max, 100))
-    Z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
-    Z = Z.reshape(xx.shape)
-    plt.contourf(xx, yy, Z, alpha=0.3, cmap=plt.cm.Paired)
-
-    plt.scatter(X_pca[:, 0], X_pca[:, 1], c=y, cmap=plt.cm.Paired, edgecolors='k')
-    plt.show()
-
-
-exp9 ffn
-
-import tensorflow as tf
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import confusion_matrix, classification_report, roc_curve, roc_auc_score
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-file_name = "survey lung cancer.csv"
-data = pd.read_csv(file_name)
-print(data.head())
-
-data['GENDER'] = data['GENDER'].map({'M': 1, 'F': 0})
-data['LUNG_CANCER'] = data['LUNG_CANCER'].map({'YES': 1, 'NO': 0})
-
-x = data.drop(columns=['LUNG_CANCER']).values
-y = data['LUNG_CANCER'].values
-
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, random_state=42)
-
-scaler = StandardScaler()
-x = scaler.fit_transform(x_train)
-
-model = tf.keras.Sequential([
-    tf.keras.layers.Dense(32, activation='relu', input_shape=(x_train.shape[1],)),
-    tf.keras.layers.Dropout(0.5),
-    tf.keras.layers.Dense(16, activation='relu'),
-    tf.keras.layers.Dense(1, activation='sigmoid')
-])
-
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-              loss='binary_crossentropy',
-              metrics=['accuracy'])
-
-model.summary()
-
-history = model.fit(x_train, y_train, epochs=20, batch_size=16, validation_data=(x_test, y_test))
-
-train_acc = model.evaluate(x_train, y_train, batch_size=32)[1]
-test_acc = model.evaluate(x_test, y_test, batch_size=32)[1]
-print('Training accuracy:', train_acc)
-print('Testing accuracy:', test_acc)
-
-y_pred = (model.predict(x_test) > 0.5).astype("int32")
-print(classification_report(y_test, y_pred))
-
-conf_matrix = confusion_matrix(y_test, y_pred)
-print('Confusion Matrix:\n', conf_matrix)
-
-plt.figure(figsize=(4, 3))
-sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', cbar=False,
-            xticklabels=['No Lung Cancer', 'Lung Cancer'],
-            yticklabels=['No Lung Cancer', 'Lung Cancer'])
-plt.xlabel('Predicted')
-plt.ylabel('Actual')
-plt.title('Confusion Matrix')
-plt.tight_layout()
-plt.show()
-
-y_score = model.predict(x_test)
-fpr, tpr, _ = roc_curve(y_test, y_score)
-roc_auc = roc_auc_score(y_test, y_score)
-
-plt.figure(figsize=(8, 6))
-plt.plot(fpr, tpr, color='blue', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
-plt.plot([0, 1], [0, 1], color='red', lw=2, linestyle='--')
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('Receiver Operating Characteristic')
-plt.legend(loc="lower right")
-plt.show()
-
-
-
-exp10 rnn
-
-import numpy as np  
-import tensorflow as tf  
-print(tf.__version__)    
-from tensorflow import keras  
-from tensorflow.keras import layers  
-import matplotlib.pyplot as plt  
-
-np.random.seed(42)  
-X = np.linspace(-1.5, 1.5, 200)  
-y = np.sin(3 * np.pi * X) + np.random.normal(0, 0.1, size=X.shape)  
-X = X.reshape(-1, 1)  
-
-X_train, X_test = X[:160], X[160:]  
-y_train, y_test = y[:160], y[160:]  
-
-def build_overfitting_model():  
-    model = keras.Sequential([  
-        layers.Dense(256, activation='relu', input_shape=(1,)),  
-        layers.Dense(256, activation='relu'),  
-        layers.Dense(256, activation='relu'),  
-        layers.Dense(1)  
-    ])  
-    model.compile(optimizer='adam', loss='mse', metrics=['mae'])  
-    return model  
-
-model_overfit = build_overfitting_model()  
-history_overfit = model_overfit.fit(X_train, y_train, epochs=200, validation_data=(X_test, y_test), verbose=0)  
-
-def build_regularized_model():  
-    model = keras.Sequential([  
-        layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01), input_shape=(1,)),  
-        layers.Dropout(0.3),  
-        layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)),  
-        layers.Dropout(0.3),  
-        layers.Dense(256, activation='relu', kernel_regularizer=keras.regularizers.l2(0.01)),  
-        layers.Dropout(0.3),  
-        layers.Dense(1)  
-    ])  
-    model.compile(optimizer='adam', loss='mse', metrics=['mae'])  
-    return model  
-
-model_regularized = build_regularized_model()  
-history_regularized = model_regularized.fit(X_train, y_train, epochs=200, validation_data=(X_test, y_test), verbose=0)  
-
-overfit_test_loss = model_overfit.evaluate(X_test, y_test, verbose=0)  
-regularized_test_loss = model_regularized.evaluate(X_test, y_test, verbose=0)  
-
-print("Test Loss (Overfitting Model):", overfit_test_loss[0])  
-print("Test Loss (Regularized Model):", regularized_test_loss[0])  
-
-plt.figure(figsize=(12, 5))  
-plt.subplot(1, 2, 1)  
-plt.plot(history_overfit.history['loss'], label='Train Loss')  
-plt.plot(history_overfit.history['val_loss'], label='Validation Loss')  
-plt.title('Overfitting Model Training Loss')  
-plt.xlabel('Epochs')  
-plt.ylabel('Loss')  
-plt.legend()  
-
-plt.subplot(1, 2, 2)  
-plt.plot(history_regularized.history['loss'], label='Train Loss')  
-plt.plot(history_regularized.history['val_loss'], label='Validation Loss')  
-plt.title('Regularized Model Training Loss')  
-plt.xlabel('Epochs')  
-plt.ylabel('Loss')  
-plt.legend()  
-
-plt.tight_layout()  
-plt.show()  
-
-y_overfit_pred = model_overfit.predict(X_test)  
-y_regularized_pred = model_regularized.predict(X_test)  
-
-plt.figure(figsize=(14, 6))  
-plt.subplot(1, 2, 1)  
-plt.scatter(X_test, y_test, color='blue', label='True Values')  
-plt.scatter(X_test, y_overfit_pred, color='red', label='Overfitting Model Predictions')  
-plt.title('Overfitting Model Predictions')  
-plt.xlabel('X')  
-plt.ylabel('y')  
-plt.legend()  
-
-plt.subplot(1, 2, 2)  
-plt.scatter(X_test, y_test, color='blue', label='True Values')  
-plt.scatter(X_test, y_regularized_pred, color='green', label='Regularized Model Predictions')  
-plt.title('Regularized Model Predictions')  
-plt.xlabel('X')  
-plt.ylabel('y')  
-plt.legend()  
-
-plt.tight_layout()  
-plt.show()  
-
-
-exp11 cnn
-
-import os
-import zipfile
-import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, roc_curve
-from sklearn.preprocessing import label_binarize
-import seaborn as sns
-import tensorflow as tf
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras import layers, models
-
-# === Step 1: Define dataset path ===
-with zipfile.ZipFile('C:/Users/abiji/OneDrive/Documents/Animals.zip', 'r') as zip_ref:
-    zip_ref.extractall("C:/Users/abiji/OneDrive/Documents/Animals")
-dataset_path = "C:/Users/abiji/OneDrive/Documents/Animals"
-
-
-# === Step 2: Load dataset ===
-batch_size = 32
-img_height, img_width = 150, 150
-
-datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
-
-train_data = datagen.flow_from_directory(
-    dataset_path,
-    target_size=(img_height, img_width),
-    batch_size=batch_size,
-    class_mode='categorical',
-    subset='training',
-    shuffle=True)
-
-val_data = datagen.flow_from_directory(
-    dataset_path,
-    target_size=(img_height, img_width),
-    batch_size=batch_size,
-    class_mode='categorical',
-    subset='validation',
-    shuffle=False)
-
-class_names = list(train_data.class_indices.keys())
-num_classes = len(class_names)
-
-print(f"Detected classes: {class_names}")
-
-# === Step 3: Build CNN model ===
-model = models.Sequential([
-    layers.Conv2D(32, (3,3), activation='relu', input_shape=(img_height, img_width, 3)),
-    layers.MaxPooling2D(2,2),
-    layers.Conv2D(64, (3,3), activation='relu'),
-    layers.MaxPooling2D(2,2),
-    layers.Conv2D(128, (3,3), activation='relu'),
-    layers.MaxPooling2D(2,2),
-    layers.Flatten(),
-    layers.Dense(128, activation='relu'),
-    layers.Dense(num_classes, activation='softmax')
-])
-
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-model.fit(train_data, validation_data=val_data, epochs=10)
-
-# === Step 4: Evaluation ===
-val_data.reset()
-pred_probs = model.predict(val_data)
-y_pred = np.argmax(pred_probs, axis=1)
-y_true = val_data.classes
-y_true_bin = label_binarize(y_true, classes=range(num_classes))
-
-# Confusion Matrix
-cm = confusion_matrix(y_true, y_pred)
-plt.figure(figsize=(8, 6))
-sns.heatmap(cm, annot=True, fmt='d', xticklabels=class_names, yticklabels=class_names, cmap='Blues')
-plt.title('Confusion Matrix')
-plt.xlabel('Predicted')
-plt.ylabel('True')
-plt.tight_layout()
-plt.show()
-
-# Classification Report
-print("Classification Report:")
-print(classification_report(y_true, y_pred, target_names=class_names))
-
-# ROC Curve and AUC
-fpr = {}
-tpr = {}
-roc_auc = {}
-for i in range(num_classes):
-    fpr[i], tpr[i], _ = roc_curve(y_true_bin[:, i], pred_probs[:, i])
-    roc_auc[i] = roc_auc_score(y_true_bin[:, i], pred_probs[:, i])
-
-# Plot ROC curves
-plt.figure(figsize=(8, 6))
-for i in range(num_classes):
-    plt.plot(fpr[i], tpr[i], label=f'{class_names[i]} (AUC = {roc_auc[i]:.2f})')
-plt.plot([0, 1], [0, 1], 'k--', label='Random Guess')
-plt.xlabel('False Positive Rate')
-plt.ylabel('True Positive Rate')
-plt.title('Multiclass ROC Curve')
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-
-exp12 hm
-
-import numpy as np  
-from hmmlearn import hmm  
-states = ["Sunny", "Rainy", "Cloudy"]  
-observations = ["shorts", "coat", "umbrella"]  
-obs_map = {o: i for i, o in enumerate(observations)}  
-sequence = ["coat", "coat", "umbrella"]  
-obs_seq = np.array([obs_map[o] for o in sequence]).reshape(-1, 1)  
-model = hmm.CategoricalHMM(n_components=3, init_params='', n_iter=1)  
-model.startprob_ = np.array([0.33, 0.33, 0.34])  
-
-model.transmat_ = np.array([  
-    [0.8, 0.15, 0.05],   # Sunny  
-    [0.38, 0.6, 0.02],   # Rainy  
-    [0.75, 0.05, 0.2]    # Cloudy  
-])  
-
-model.emissionprob_ = np.array([  
-    [0.1, 0.8, 0.1],   # Sunny  
-    [0.1, 0.2, 0.7],   # Rainy  
-    [0.4, 0.5, 0.1]    # Cloud  
-])  
-
-predicted_states = model.predict(obs_seq)  
-log_prob = model.score(obs_seq)  
-probability = np.exp(log_prob)  # Convert from log probability to regular probability  
-
-print("Observation sequence:", sequence)  
-print("Predicted weather states:", [states[i] for i in predicted_states])  
-print("Log probability of the observation sequence:", log_prob)  
-print("Probability of the observation sequence:", probability)
+---------------------------------------------------------------------------------
+
+import bluetooth
+import random
+import time
+
+# Search for your ESP32 device name
+esp_name = "ESP32-BT-Server"
+
+print("Searching for ESP32 Bluetooth device...")
+devices = bluetooth.discover_devices(duration=8, lookup_names=True)
+
+esp_address = None
+for addr, name in devices:
+    if name == esp_name:
+        esp_address = addr
+        break
+
+if not esp_address:
+    print("ESP32 not found!")
+    exit()
+
+# Connect to ESP32 on RFCOMM channel 1
+sock = bluetooth.BluetoothSocket(bluetooth.RFCOMM)
+sock.connect((esp_address, 1))
+print("Connected to ESP32")
+
+try:
+    while True:
+        value = random.randint(0, 1)
+        message = "High" if value == 1 else "Low"
+        print(f"Sending: {message}")
+        sock.send(message + "\n")  # Send with newline
+        time.sleep(5)  # Send every 5 seconds
+
+except KeyboardInterrupt:
+    print("Stopping...")
+    sock.close()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#include <WiFi.h>
+#include <WebServer.h>
+#include <ArduinoJson.h>
+
+// WiFi credentials
+const char* ssid = "Your_SSID";
+const char* password = "Your_PASSWORD";
+
+WebServer server(80);
+
+// Define LED pins
+const int redLEDPin = 5;   // GPIO5 for red LED
+const int blueLEDPin = 18; // GPIO18 for blue LED
+
+void handleData() {
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    StaticJsonDocument<200> doc;
+    DeserializationError error = deserializeJson(doc, body);
+
+    if (!error) {
+      int field3 = doc["field3"]; // Read as int
+      int field4 = doc["field4"];
+
+      Serial.println("Received from Raspberry Pi:");
+      Serial.println("Field 3: " + String(field3));
+      Serial.println("Field 4: " + String(field4));
+
+      // Control LEDs
+      digitalWrite(redLEDPin, field3 == 1 ? HIGH : LOW);
+      digitalWrite(blueLEDPin, field4 == 1 ? HIGH : LOW);
+
+      server.send(200, "text/plain", "LEDs updated");
+    } else {
+      server.send(400, "text/plain", "Invalid JSON");
+    }
+  } else {
+    server.send(400, "text/plain", "No data received");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Setup LED pins
+  pinMode(redLEDPin, OUTPUT);
+  pinMode(blueLEDPin, OUTPUT);
+  digitalWrite(redLEDPin, LOW);
+  digitalWrite(blueLEDPin, LOW);
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected. IP: " + WiFi.localIP().toString());
+
+  // Set server route
+  server.on("/data", HTTP_POST, handleData);
+  server.begin();
+}
+
+void loop() {
+  server.handleClient();
+}
+
+-------------------
+
+Beacon 
+
+
+#include <BLEDevice.h>               // Include BLE library for ESP32
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <math.h>                    // Include math library for distance calculation
+
+BLEScan* pBLEScan;                  // Pointer to the BLE scanner object
+BLEAddress beaconAddress("60:77:71:8e:74:1B"); // Target beacon's MAC address
+
+// Function to estimate distance from RSSI using the path loss formula
+float calculateDistance(int rssi) {
+  int txPower = -64;               // signal strength at 1 meter for the used beacon
+  float n = 2.0;                   // Environmental constant (2 for open space)
+  return pow(10.0, ((txPower - rssi) / (10 * n))); // Distance in meters
+}
+
+// Custom callback class to handle advertised BLE devices 
+class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    if (advertisedDevice.getAddress().equals(beaconAddress)) { // If this is the beacon we care about
+      int rssi = advertisedDevice.getRSSI();                   // Read signal strength
+      float distance = calculateDistance(rssi);                // Estimate distance
+      Serial.print("Found Beacon with RSSI: ");
+      Serial.print(rssi);
+      Serial.print(" | Estimated Distance: ");
+      Serial.print(distance, 2);                               // Print with 2 decimal places
+      Serial.println(" meters");
+    }
+  }
+};
+
+// Setup function runs once
+void setup() {
+  Serial.begin(115200);            // Start serial monitor
+  BLEDevice::init("");             // Initialize BLE device
+  pBLEScan = BLEDevice::getScan(); // Get BLE scanner instance
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks()); // Set our callback
+  pBLEScan->setActiveScan(true);  // Enable active scanning (gets more data)
+  pBLEScan->setInterval(50);      // Set scan interval
+  pBLEScan->setWindow(49);        // Set scan window (almost equal to interval)
+}
+
+// Loop function runs continuously
+void loop() {
+  pBLEScan->start(4, false);       // Start scanning for 4 seconds
+}
+
+-------
+
+#include <SPI.h>
+#include <MFRC522.h>
+
+#define RST_PIN 22  // Reset pin for MFRC522
+#define SS_PIN 5    // Slave Select pin for MFRC522
+
+MFRC522 mfrc522(SS_PIN, RST_PIN);  // Create MFRC522 instance
+
+void setup() {
+  Serial.begin(115200);  // Start serial communication
+  SPI.begin();           // Init SPI bus
+  mfrc522.PCD_Init();    // Init MFRC522 module
+  Serial.println("Scan an RFID tag to see its UID...");
+}
+
+void loop() {
+  // Look for a new card
+  if (mfrc522.PICC_IsNewCardPresent()) {
+    if (mfrc522.PICC_ReadCardSerial()) {
+      char tagID[16];
+      for (byte i = 0; i < mfrc522.uid.size; i++) {
+        snprintf(tagID + (i * 2), 3, "%02X", mfrc522.uid.uidByte[i]);
+      }
+
+      // Print UID
+      Serial.print("RFID Tag UID: ");
+      Serial.println(tagID);
+    }
+  }
+}
+
